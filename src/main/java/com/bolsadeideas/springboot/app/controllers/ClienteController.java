@@ -6,9 +6,13 @@ import com.bolsadeideas.springboot.app.models.service.IClienteService;
 import com.bolsadeideas.springboot.app.util.paginator.PageRender;
 import lombok.extern.log4j.Log4j2;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.core.io.Resource;
+import org.springframework.core.io.UrlResource;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.validation.BindingResult;
@@ -18,7 +22,9 @@ import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 
 import javax.validation.Valid;
+import java.io.File;
 import java.io.IOException;
+import java.net.MalformedURLException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -37,6 +43,35 @@ public class ClienteController {
 
     @Autowired
     private IClienteService clienteService;
+
+    private final static String UPLOAD_FOLDER = "uploads";
+
+    /*:.+m expresion regular dentro del parametro de la url va permitir que spring no borre o trunque la
+    * extencion del archivo, por cuando detecte la url termina en .jpg solo va captura el nombre del archivo y no
+    * la extencion*/
+    @GetMapping(value = "/uploads/{filename:.+}")
+    //ResponseEntity es del tipo Resource porque se va retornar un recurso, una imagen a la respuesta http
+    //se tiene que tomar filename, y convertirla a un Path para poder cargar esta imagen, un path absoluto
+    public ResponseEntity<Resource> verFoto(@PathVariable String filename){
+        /*.get("uploads"), directorio raiz. resolve, permite concatenar otro path al path principal*/
+        Path pathFoto = Paths.get(UPLOAD_FOLDER).resolve(filename).toAbsolutePath();
+        log.info("pathFoto: "+ pathFoto);
+        Resource recurso = null;
+
+        try {
+            //UrlResource permte cargar la imagen en la respuesta HTTP
+            recurso = new UrlResource(pathFoto.toUri());
+            if (!recurso.exists() && !recurso.isReadable()){
+                throw new RuntimeException("Error: no se puede cargar la imagen: "+ pathFoto.toString());
+            }
+        } catch (MalformedURLException e) {
+            e.printStackTrace();
+        }
+
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\""+recurso.getFilename()+"\"")
+                .body(recurso);
+    }
 
     @GetMapping(value = "/ver/{id}")
     public String ver(@PathVariable(value = "id") Long id, Map<String, Object> model, RedirectAttributes flash){
@@ -126,28 +161,26 @@ public class ClienteController {
         }
 
         if (!foto.isEmpty()){
-            /*//A. Para ruta interna(en el mismo proyecto)
-            Path directorioRecursos = Paths.get("src//main//resources//static/uploads");
-            String rootPath = directorioRecursos.toFile().getAbsolutePath();*/
-            /* B.//Ruta externa
-            String rootPath = "C://Temp//uploads";
-            */
-            //C.
+
+            if(cliente.getId() != null && cliente.getId() > 0 && cliente.getFoto() != null && cliente.getFoto().length() > 0){
+
+                Path rootPath = Paths.get(UPLOAD_FOLDER).resolve(cliente.getFoto()).toAbsolutePath();
+                File archivo = rootPath.toFile();
+                if (archivo.exists() && archivo.canRead()){
+                    archivo.delete();
+                }
+            }
+
             // Codigo para evitar tener archivos con el mismo nombre
             String uniqueFilename = UUID.randomUUID().toString() +"_"+ foto.getOriginalFilename();
             // creando una una ruta absoluta en el directorio raiz dentro del proyecto
             //la ruta seria: uploads/(el nombre del archivo)
-            Path rootPath = Paths.get("uploads").resolve(uniqueFilename);
+            Path rootPath = Paths.get(UPLOAD_FOLDER).resolve(uniqueFilename);
             //para obyener la ruta completa, desde: D:/workspace/Spring5/....
             Path rootAbsolutePath = rootPath.toAbsolutePath();
             log.info("rootPath: "+ rootPath);
             log.info("rootAbsolutePath: "+ rootAbsolutePath);
             try {
-                /* Se utilizo para la forma A. y B.
-                byte[] bytes = foto.getBytes();
-                Path rutaCompleta = Paths.get(rootPath + "//" + foto.getOriginalFilename());
-                //creando y escribiendo la imagen al directorio uploads
-                Files.write(rutaCompleta, bytes);*/
 
                 Files.copy(foto.getInputStream(), rootAbsolutePath);
 
@@ -170,8 +203,19 @@ public class ClienteController {
     @RequestMapping(value = "/eliminar/{id}")
     public String eliminar(@PathVariable(value = "id") Long id, RedirectAttributes flash){
         if(id>0) {
+
+            Cliente cliente = clienteService.findOne(id);
+
             clienteService.delete(id);
             flash.addFlashAttribute("success","Cliente eliminado con éxito");
+
+            Path rootPath = Paths.get(UPLOAD_FOLDER).resolve(cliente.getFoto()).toAbsolutePath();
+            File archivo = rootPath.toFile();
+            if (archivo.exists() && archivo.canRead()){
+                if (archivo.delete()){
+                    flash.addFlashAttribute("info","Foto "+ cliente.getFoto()+ " eliminada con exito");
+                }
+            }
         }
         return "redirect:/listar";
     }
