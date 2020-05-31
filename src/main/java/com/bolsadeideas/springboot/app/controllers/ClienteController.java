@@ -4,6 +4,7 @@ import com.bolsadeideas.springboot.app.models.dao.IClienteDao;
 import com.bolsadeideas.springboot.app.models.entity.Cliente;
 import com.bolsadeideas.springboot.app.models.service.IClienteService;
 import com.bolsadeideas.springboot.app.util.paginator.PageRender;
+import lombok.extern.log4j.Log4j2;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -13,11 +14,18 @@ import org.springframework.ui.Model;
 import org.springframework.validation.BindingResult;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.bind.support.SessionStatus;
+import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 
 import javax.validation.Valid;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.Map;
+import java.util.UUID;
 
+@Log4j2
 @Controller
 /*se puede quitar o comentar la linea de codigo la obtencio del id en modo Hidden de form.html
  * y podriamos usar @SessionAttributes mediante el cual se indica que se va guardar en los atributos
@@ -29,6 +37,22 @@ public class ClienteController {
 
     @Autowired
     private IClienteService clienteService;
+
+    @GetMapping(value = "/ver/{id}")
+    public String ver(@PathVariable(value = "id") Long id, Map<String, Object> model, RedirectAttributes flash){
+
+        Cliente cliente = clienteService.findOne(id);
+        if (cliente == null) {
+            flash.addFlashAttribute("error", "El cliente no existe en la base de datos");
+            return "redirect:/listar";
+        }
+
+        model.put("cliente", cliente);
+        model.put("titulo", "Detalle cliente: "+ cliente.getNombre());
+
+        return "ver";
+    }
+
     /*
     @RequestMapping(value = "listar", method = RequestMethod.GET)
     public String listar(Model model){
@@ -94,11 +118,47 @@ public class ClienteController {
     * si en caso ese nombre es distinto al de la clase(en el parametro) sin tener en cuenta la mayuscula*/
     /*RedirectAttributes, va permitir mostart un mensaje se estado de un request al finalizarlo*/
     @RequestMapping(value = "/form", method = RequestMethod.POST)
-    public String guardar(@Valid Cliente cliente, BindingResult result, Model model, RedirectAttributes flash, SessionStatus status){
+    public String guardar(@Valid Cliente cliente, BindingResult result, Model model,
+                          @RequestParam("file") MultipartFile foto, RedirectAttributes flash, SessionStatus status){
         if (result.hasErrors()){
             model.addAttribute("titulo", "Formulario de Cliente");
             return "form";
         }
+
+        if (!foto.isEmpty()){
+            /*//A. Para ruta interna(en el mismo proyecto)
+            Path directorioRecursos = Paths.get("src//main//resources//static/uploads");
+            String rootPath = directorioRecursos.toFile().getAbsolutePath();*/
+            /* B.//Ruta externa
+            String rootPath = "C://Temp//uploads";
+            */
+            //C.
+            // Codigo para evitar tener archivos con el mismo nombre
+            String uniqueFilename = UUID.randomUUID().toString() +"_"+ foto.getOriginalFilename();
+            // creando una una ruta absoluta en el directorio raiz dentro del proyecto
+            //la ruta seria: uploads/(el nombre del archivo)
+            Path rootPath = Paths.get("uploads").resolve(uniqueFilename);
+            //para obyener la ruta completa, desde: D:/workspace/Spring5/....
+            Path rootAbsolutePath = rootPath.toAbsolutePath();
+            log.info("rootPath: "+ rootPath);
+            log.info("rootAbsolutePath: "+ rootAbsolutePath);
+            try {
+                /* Se utilizo para la forma A. y B.
+                byte[] bytes = foto.getBytes();
+                Path rutaCompleta = Paths.get(rootPath + "//" + foto.getOriginalFilename());
+                //creando y escribiendo la imagen al directorio uploads
+                Files.write(rutaCompleta, bytes);*/
+
+                Files.copy(foto.getInputStream(), rootAbsolutePath);
+
+                flash.addFlashAttribute("info", "Imagen subido correctamente '"+ uniqueFilename+"'");
+
+                cliente.setFoto(uniqueFilename);
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+
         String mensajeFlash = (cliente.getId() != null)? "Cliente editado con éxito!" : "Cliente creado con éxito!";
 
         clienteService.save(cliente);
