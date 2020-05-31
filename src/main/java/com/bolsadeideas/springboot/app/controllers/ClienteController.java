@@ -1,13 +1,12 @@
 package com.bolsadeideas.springboot.app.controllers;
 
-import com.bolsadeideas.springboot.app.models.dao.IClienteDao;
 import com.bolsadeideas.springboot.app.models.entity.Cliente;
 import com.bolsadeideas.springboot.app.models.service.IClienteService;
+import com.bolsadeideas.springboot.app.models.service.IUploadFileService;
 import com.bolsadeideas.springboot.app.util.paginator.PageRender;
 import lombok.extern.log4j.Log4j2;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.Resource;
-import org.springframework.core.io.UrlResource;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -22,14 +21,9 @@ import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 
 import javax.validation.Valid;
-import java.io.File;
 import java.io.IOException;
 import java.net.MalformedURLException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.Map;
-import java.util.UUID;
 
 @Log4j2
 @Controller
@@ -44,37 +38,31 @@ public class ClienteController {
     @Autowired
     private IClienteService clienteService;
 
-    private final static String UPLOAD_FOLDER = "uploads";
+    @Autowired
+    private IUploadFileService uploadFileService;
 
     /*:.+m expresion regular dentro del parametro de la url va permitir que spring no borre o trunque la
-    * extencion del archivo, por cuando detecte la url termina en .jpg solo va captura el nombre del archivo y no
-    * la extencion*/
+     * extencion del archivo, por cuando detecte la url termina en .jpg solo va captura el nombre del archivo y no
+     * la extencion*/
     @GetMapping(value = "/uploads/{filename:.+}")
     //ResponseEntity es del tipo Resource porque se va retornar un recurso, una imagen a la respuesta http
     //se tiene que tomar filename, y convertirla a un Path para poder cargar esta imagen, un path absoluto
-    public ResponseEntity<Resource> verFoto(@PathVariable String filename){
-        /*.get("uploads"), directorio raiz. resolve, permite concatenar otro path al path principal*/
-        Path pathFoto = Paths.get(UPLOAD_FOLDER).resolve(filename).toAbsolutePath();
-        log.info("pathFoto: "+ pathFoto);
-        Resource recurso = null;
+    public ResponseEntity<Resource> verFoto(@PathVariable String filename) {
 
+        Resource recurso = null;
         try {
-            //UrlResource permte cargar la imagen en la respuesta HTTP
-            recurso = new UrlResource(pathFoto.toUri());
-            if (!recurso.exists() && !recurso.isReadable()){
-                throw new RuntimeException("Error: no se puede cargar la imagen: "+ pathFoto.toString());
-            }
+            recurso = uploadFileService.load(filename);
         } catch (MalformedURLException e) {
             e.printStackTrace();
         }
 
         return ResponseEntity.ok()
-                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\""+recurso.getFilename()+"\"")
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + recurso.getFilename() + "\"")
                 .body(recurso);
     }
 
     @GetMapping(value = "/ver/{id}")
-    public String ver(@PathVariable(value = "id") Long id, Map<String, Object> model, RedirectAttributes flash){
+    public String ver(@PathVariable(value = "id") Long id, Map<String, Object> model, RedirectAttributes flash) {
 
         Cliente cliente = clienteService.findOne(id);
         if (cliente == null) {
@@ -83,7 +71,7 @@ public class ClienteController {
         }
 
         model.put("cliente", cliente);
-        model.put("titulo", "Detalle cliente: "+ cliente.getNombre());
+        model.put("titulo", "Detalle cliente: " + cliente.getNombre());
 
         return "ver";
     }
@@ -97,7 +85,7 @@ public class ClienteController {
     }
     */
     @RequestMapping(value = "listar", method = RequestMethod.GET)
-    public String listar(@RequestParam(name = "page", defaultValue = "0") int page, Model model){
+    public String listar(@RequestParam(name = "page", defaultValue = "0") int page, Model model) {
 
         Pageable pageRequest = PageRequest.of(page, 5);
         Page<Cliente> clientes = clienteService.findAll(pageRequest);
@@ -114,108 +102,92 @@ public class ClienteController {
     /*1era fase el mostrar el formulario al usuario. Lo que se hace aca es crear una instancia de
      * un objeto Cliente y se lo pasa la vista*/
     @RequestMapping(value = "/form")
-    public String crear(Map<String, Object> model){
+    public String crear(Map<String, Object> model) {
 
         Cliente cliente = new Cliente();
         model.put("cliente", cliente);
-        model.put("titulo","Formulario de Cliente");
+        model.put("titulo", "Formulario de Cliente");
 
         return "form";
     }
-    
-    @RequestMapping(value="/form/{id}")
+
+    @RequestMapping(value = "/form/{id}")
     public String editar(@PathVariable(value = "id") Long id, Map<String, Object> model, RedirectAttributes flash) {
-    	
-    	Cliente cliente = null;
-    	
-    	if(id>0) {
-    		cliente = clienteService.findOne(id);
-    		if (cliente == null ){
-                flash.addFlashAttribute("error","El ID del cliente no existe en la BBDD!");
+
+        Cliente cliente = null;
+
+        if (id > 0) {
+            cliente = clienteService.findOne(id);
+            if (cliente == null) {
+                flash.addFlashAttribute("error", "El ID del cliente no existe en la BBDD!");
                 return "redirect:/listar";
             }
-    	} else {
-            flash.addFlashAttribute("error","El ID del cliente no puede ser cero!");
-    		return "redirect:/listar";
-    	}
-    	
-    	model.put("cliente", cliente);
-    	model.put("titulo", "Editar cliente");
-    	return "form";
+        } else {
+            flash.addFlashAttribute("error", "El ID del cliente no puede ser cero!");
+            return "redirect:/listar";
+        }
+
+        model.put("cliente", cliente);
+        model.put("titulo", "Editar cliente");
+        return "form";
     }
-    
+
 
     /*2da fase es cuando el usuarioo envia en el submit los datos del formulario, se tiene que tener
-    * un metodo que se encarge de procesar esos datos*/
+     * un metodo que se encarge de procesar esos datos*/
     /*@Valid de javax para que recoja la validacion. Tener en cuenta que siempre BindingResult va
-    * junto al objeto del formulario en este caso el Cliente; ya despues otros parametros*/
+     * junto al objeto del formulario en este caso el Cliente; ya despues otros parametros*/
     /*@ModelAttribute("cliente"), permite colocar el nombre especificado en el model.put que trae al objeto
-    * si en caso ese nombre es distinto al de la clase(en el parametro) sin tener en cuenta la mayuscula*/
+     * si en caso ese nombre es distinto al de la clase(en el parametro) sin tener en cuenta la mayuscula*/
     /*RedirectAttributes, va permitir mostart un mensaje se estado de un request al finalizarlo*/
     @RequestMapping(value = "/form", method = RequestMethod.POST)
     public String guardar(@Valid Cliente cliente, BindingResult result, Model model,
-                          @RequestParam("file") MultipartFile foto, RedirectAttributes flash, SessionStatus status){
-        if (result.hasErrors()){
+                          @RequestParam("file") MultipartFile foto, RedirectAttributes flash, SessionStatus status) {
+        if (result.hasErrors()) {
             model.addAttribute("titulo", "Formulario de Cliente");
             return "form";
         }
 
-        if (!foto.isEmpty()){
+        if (!foto.isEmpty()) {
 
-            if(cliente.getId() != null && cliente.getId() > 0 && cliente.getFoto() != null && cliente.getFoto().length() > 0){
+            if (cliente.getId() != null && cliente.getId() > 0 && cliente.getFoto() != null && cliente.getFoto().length() > 0) {
 
-                Path rootPath = Paths.get(UPLOAD_FOLDER).resolve(cliente.getFoto()).toAbsolutePath();
-                File archivo = rootPath.toFile();
-                if (archivo.exists() && archivo.canRead()){
-                    archivo.delete();
-                }
+                uploadFileService.delete(cliente.getFoto());
             }
 
-            // Codigo para evitar tener archivos con el mismo nombre
-            String uniqueFilename = UUID.randomUUID().toString() +"_"+ foto.getOriginalFilename();
-            // creando una una ruta absoluta en el directorio raiz dentro del proyecto
-            //la ruta seria: uploads/(el nombre del archivo)
-            Path rootPath = Paths.get(UPLOAD_FOLDER).resolve(uniqueFilename);
-            //para obyener la ruta completa, desde: D:/workspace/Spring5/....
-            Path rootAbsolutePath = rootPath.toAbsolutePath();
-            log.info("rootPath: "+ rootPath);
-            log.info("rootAbsolutePath: "+ rootAbsolutePath);
+            String uniqueFilename = null;
             try {
-
-                Files.copy(foto.getInputStream(), rootAbsolutePath);
-
-                flash.addFlashAttribute("info", "Imagen subido correctamente '"+ uniqueFilename+"'");
-
-                cliente.setFoto(uniqueFilename);
+                uniqueFilename = uploadFileService.copy(foto);
             } catch (IOException e) {
                 e.printStackTrace();
             }
+
+            flash.addFlashAttribute("info", "Imagen subido correctamente '" + uniqueFilename + "'");
+
+            cliente.setFoto(uniqueFilename);
         }
 
-        String mensajeFlash = (cliente.getId() != null)? "Cliente editado con éxito!" : "Cliente creado con éxito!";
+        String mensajeFlash = (cliente.getId() != null) ? "Cliente editado con éxito!" : "Cliente creado con éxito!";
 
         clienteService.save(cliente);
         status.setComplete();
-        flash.addFlashAttribute("success",mensajeFlash);
+        flash.addFlashAttribute("success", mensajeFlash);
         return "redirect:listar";
     }
 
     @RequestMapping(value = "/eliminar/{id}")
-    public String eliminar(@PathVariable(value = "id") Long id, RedirectAttributes flash){
-        if(id>0) {
+    public String eliminar(@PathVariable(value = "id") Long id, RedirectAttributes flash) {
+        if (id > 0) {
 
             Cliente cliente = clienteService.findOne(id);
 
             clienteService.delete(id);
-            flash.addFlashAttribute("success","Cliente eliminado con éxito");
+            flash.addFlashAttribute("success", "Cliente eliminado con éxito");
 
-            Path rootPath = Paths.get(UPLOAD_FOLDER).resolve(cliente.getFoto()).toAbsolutePath();
-            File archivo = rootPath.toFile();
-            if (archivo.exists() && archivo.canRead()){
-                if (archivo.delete()){
-                    flash.addFlashAttribute("info","Foto "+ cliente.getFoto()+ " eliminada con exito");
-                }
+            if (uploadFileService.delete(cliente.getFoto())) {
+                flash.addFlashAttribute("info", "Foto " + cliente.getFoto() + " eliminada con exito");
             }
+
         }
         return "redirect:/listar";
     }
